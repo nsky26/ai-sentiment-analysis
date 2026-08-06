@@ -146,6 +146,13 @@ with st.sidebar:
             '<span style="color:#a78bfa;font-weight:700;">🚀 train.csv Dataset</span><br>'
             '<span style="color:#c4b5fd;font-size:0.8rem;">27,481 real labeled tweets · Top priority</span>'
             '</div>', unsafe_allow_html=True)
+    elif st.session_state.trained and st.session_state.accuracy is not None:
+        st.markdown(
+            '<div style="background:#1a2a3a;border:1px solid #a78bfa;border-radius:8px;'
+            'padding:0.6rem 0.9rem;margin-bottom:0.8rem;">'
+            '<span style="color:#a78bfa;font-weight:700;">🧠 Pre-trained Model Active</span><br>'
+            f'<span style="color:#c4b5fd;font-size:0.8rem;">Kaggle Dataset ({_acc_pct} Test Acc)</span>'
+            '</div>', unsafe_allow_html=True)
     elif sentiment_csv_available():
         st.markdown(
             '<div style="background:#1a2a3a;border:1px solid #60a5fa;border-radius:8px;'
@@ -191,9 +198,9 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("""### ℹ️ About
-**Model:** Logistic Regression  
-**Features:** TF-IDF (1–2 grams, 15k vocab)  
-**Preprocessing:** NLTK pipeline  
+**Model:** LR + Calibrated LinearSVC Ensemble  
+**Features:** TF-IDF (Word 1–2g, Char 3–5g + VADER)  
+**Preprocessing:** NLTK pipeline (Contractions, Lemmatization)  
 **Classes:** Positive · Neutral · Negative""")
 
     st.markdown("---")
