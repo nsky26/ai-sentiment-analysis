@@ -12,7 +12,7 @@ import streamlit as st
 
 from preprocess import preprocess_text, batch_preprocess
 from utils import (
-    load_model, model_exists, predict_sentiment,
+    load_model, load_metrics, model_exists, predict_sentiment,
     plot_probability_bar, plot_confusion_matrix,
     format_confidence, SENTIMENT_COLORS, LABEL_MAP,
 )
@@ -97,7 +97,12 @@ if not st.session_state.trained:
         with st.spinner("🔄 Loading saved model…"):
             try:
                 m, v, le = _load_saved_model()
-                _store_model(m, v, le)
+                metrics = load_metrics()
+                if metrics:
+                    _store_model(m, v, le, cm=metrics.get("cm"), classes=metrics.get("classes"),
+                                 acc=metrics.get("accuracy"), report=metrics.get("report"))
+                else:
+                    _store_model(m, v, le)
             except Exception as exc:
                 st.error(f"Failed to load model: {exc}")
                 st.stop()
@@ -268,64 +273,111 @@ with tab_single:
 </div>""", unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 2 – Batch CSV
+# TAB 2 – Batch CSV & Live Dataset Evaluation
 # ═══════════════════════════════════════════════════════════════════════════════
 with tab_batch:
-    st.markdown("### Upload a CSV for batch predictions")
-    st.info("📋 Your CSV must have a column named **`text`**.", icon="ℹ️")
+    st.markdown("### Upload your Dataset for Batch Prediction & Testing")
+    st.info("📋 Upload any `.csv` dataset (e.g. from Kaggle). Select your text column and optional ground-truth label column to evaluate accuracy.", icon="ℹ️")
 
-    uploaded_file = st.file_uploader("CSV", type=["csv"], label_visibility="collapsed")
+    uploaded_file = st.file_uploader("CSV Dataset", type=["csv"], label_visibility="collapsed")
 
     if uploaded_file:
         try:
             df_up = pd.read_csv(uploaded_file)
-            if "text" not in df_up.columns:
-                st.error("❌ Column `text` not found. Rename your text column to `text`.")
-            else:
-                st.success(f"✅ {len(df_up):,} rows loaded.")
-                st.dataframe(df_up.head(5), use_container_width=True)
+            st.success(f"✅ Loaded **{len(df_up):,}** rows from uploaded file.")
+            
+            # Column selector
+            cols = list(df_up.columns)
+            text_col_default = "text" if "text" in cols else cols[0]
+            
+            c_col1, c_col2 = st.columns(2)
+            with c_col1:
+                selected_text_col = st.selectbox("Select Text Column", cols, index=cols.index(text_col_default))
+            with c_col2:
+                possible_labels = ["None"] + [c for c in cols if c != selected_text_col]
+                label_default = "sentiment" if "sentiment" in possible_labels else ("label" if "label" in possible_labels else "None")
+                selected_label_col = st.selectbox("Select True Sentiment/Label Column (Optional)", possible_labels, index=possible_labels.index(label_default))
 
-                if st.button("⚡ Run Batch Predictions", use_container_width=True):
-                    with st.spinner(f"Processing {len(df_up):,} rows…"):
-                        clean_texts = batch_preprocess(df_up["text"].fillna("").tolist())
-                        preds, confs, probas = [], [], []
-                        raw_texts_list = df_up["text"].fillna("").tolist()
-                        for ct, rt in zip(clean_texts, raw_texts_list):
-                            r = predict_sentiment(ct, st.session_state.model,
-                                                  st.session_state.vectorizer,
-                                                  st.session_state.label_encoder,
-                                                  raw_text=rt)
-                            preds.append(r["label"])
-                            confs.append(r["confidence"])
-                            probas.append(r["probabilities"])
+            st.dataframe(df_up.head(5), use_container_width=True)
 
-                        df_up["predicted_sentiment"] = preds
-                        df_up["confidence"] = [f"{c*100:.1f}%" for c in confs]
-                        for cls in ["positive", "neutral", "negative"]:
-                            df_up[f"prob_{cls}"] = [f"{p.get(cls,0)*100:.1f}%" for p in probas]
+            if st.button("⚡ Run Predictions & Testing", use_container_width=True):
+                with st.spinner(f"Processing {len(df_up):,} rows…"):
+                    clean_texts = batch_preprocess(df_up[selected_text_col].fillna("").tolist())
+                    preds, confs, probas = [], [], []
+                    raw_texts_list = df_up[selected_text_col].fillna("").tolist()
+                    for ct, rt in zip(clean_texts, raw_texts_list):
+                        r = predict_sentiment(ct, st.session_state.model,
+                                              st.session_state.vectorizer,
+                                              st.session_state.label_encoder,
+                                              raw_text=rt)
+                        preds.append(r["label"])
+                        confs.append(r["confidence"])
+                        probas.append(r["probabilities"])
 
-                    counts = pd.Series(preds).value_counts()
-                    c1, c2, c3 = st.columns(3)
-                    for col_w, sent in zip([c1,c2,c3], ["positive","neutral","negative"]):
-                        cnt = counts.get(sent, 0)
-                        pct = cnt / len(preds) * 100
-                        with col_w:
-                            st.markdown(
-                                f'<div class="metric-box">'
-                                f'<div class="value" style="color:{SENTIMENT_COLORS[sent]};">{cnt}</div>'
-                                f'<div class="label">{sent} ({pct:.0f}%)</div></div>',
-                                unsafe_allow_html=True)
+                    df_up["predicted_sentiment"] = preds
+                    df_up["confidence"] = [f"{c*100:.1f}%" for c in confs]
+                    for cls in ["positive", "neutral", "negative"]:
+                        df_up[f"prob_{cls}"] = [f"{p.get(cls,0)*100:.1f}%" for p in probas]
 
-                    st.dataframe(df_up, use_container_width=True)
-                    buf = io.StringIO()
-                    df_up.to_csv(buf, index=False)
-                    st.download_button("⬇️ Download Results CSV", buf.getvalue(),
-                                       "sentiment_predictions.csv", "text/csv",
-                                       use_container_width=True)
+                counts = pd.Series(preds).value_counts()
+                st.markdown("#### Prediction Summary")
+                c1, c2, c3 = st.columns(3)
+                for col_w, sent in zip([c1,c2,c3], ["positive","neutral","negative"]):
+                    cnt = counts.get(sent, 0)
+                    pct = cnt / len(preds) * 100 if len(preds) else 0
+                    with col_w:
+                        st.markdown(
+                            f'<div class="metric-box">'
+                            f'<div class="value" style="color:{SENTIMENT_COLORS[sent]};">{cnt}</div>'
+                            f'<div class="label">{sent} ({pct:.0f}%)</div></div>',
+                            unsafe_allow_html=True)
+
+                # If Ground-Truth label column selected, perform evaluation
+                if selected_label_col != "None":
+                    st.markdown("---")
+                    st.markdown("### 📊 Dataset Evaluation Results")
+                    try:
+                        from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
+                        
+                        y_true_raw = df_up[selected_label_col].astype(str).str.strip().str.lower()
+                        valid_mask = y_true_raw.isin(["positive", "neutral", "negative"])
+                        
+                        if valid_mask.sum() > 0:
+                            y_true = y_true_raw[valid_mask].tolist()
+                            y_pred_eval = [preds[i] for i in range(len(preds)) if valid_mask.iloc[i]]
+                            
+                            eval_acc = accuracy_score(y_true, y_pred_eval)
+                            eval_classes = sorted(list(set(y_true) | set(y_pred_eval)))
+                            eval_cm = confusion_matrix(y_true, y_pred_eval, labels=eval_classes)
+                            eval_rep = classification_report(y_true, y_pred_eval, target_names=eval_classes)
+
+                            col_e1, col_e2 = st.columns(2)
+                            with col_e1:
+                                st.markdown(
+                                    f'<div class="metric-box" style="margin-bottom:1rem;">'
+                                    f'<div class="value">{eval_acc*100:.1f}%</div>'
+                                    f'<div class="label">Evaluated Accuracy ({valid_mask.sum():,} valid rows)</div></div>',
+                                    unsafe_allow_html=True)
+                                st.pyplot(plot_confusion_matrix(eval_cm, eval_classes), use_container_width=True)
+                            with col_e2:
+                                st.markdown("#### Classification Report")
+                                st.code(eval_rep, language="text")
+                        else:
+                            st.warning("⚠️ Could not match values in label column to 'positive', 'neutral', 'negative'.")
+                    except Exception as eval_err:
+                        st.error(f"Evaluation error: {eval_err}")
+
+                st.markdown("---")
+                st.dataframe(df_up, use_container_width=True)
+                buf = io.StringIO()
+                df_up.to_csv(buf, index=False)
+                st.download_button("⬇️ Download Results CSV", buf.getvalue(),
+                                   "sentiment_predictions.csv", "text/csv",
+                                   use_container_width=True)
         except Exception as exc:
             st.error(f"Error: {exc}")
     else:
-        sample = pd.DataFrame({"text": ["I love this!","It's okay.","Terrible waste."]})
+        sample = pd.DataFrame({"text": ["I love this!","It's okay.","Terrible waste."], "sentiment": ["positive", "neutral", "negative"]})
         st.dataframe(sample, use_container_width=True)
         st.download_button("⬇️ Download Sample CSV", sample.to_csv(index=False),
                            "sample_input.csv", "text/csv")
@@ -336,7 +388,16 @@ with tab_batch:
 with tab_metrics:
     st.markdown("### 📈 Model Performance Metrics")
 
-    # Compute metrics on-the-fly if not already stored
+    # Load saved metrics first if not loaded
+    if st.session_state.cm is None or st.session_state.accuracy is None:
+        saved_m = load_metrics()
+        if saved_m:
+            st.session_state.cm         = saved_m.get("cm")
+            st.session_state.cm_classes = saved_m.get("classes")
+            st.session_state.accuracy   = saved_m.get("accuracy")
+            st.session_state.report     = saved_m.get("report")
+
+    # Compute metrics on-the-fly if still missing
     if st.session_state.cm is None or st.session_state.accuracy is None:
         with st.spinner("Evaluating on held-out test set…"):
             try:

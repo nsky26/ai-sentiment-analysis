@@ -21,6 +21,7 @@ MODEL_DIR = Path("models")
 MODEL_PATH = MODEL_DIR / "sentiment_model.pkl"
 VECTORIZER_PATH = MODEL_DIR / "tfidf_vectorizer.pkl"
 LABEL_ENCODER_PATH = MODEL_DIR / "label_encoder.pkl"
+METRICS_PATH = MODEL_DIR / "metrics.pkl"
 
 LABEL_MAP = {
     "positive": "Positive 😊",
@@ -63,6 +64,25 @@ def save_model(model, vectorizer, label_encoder):
     save_artifact(vectorizer, VECTORIZER_PATH)
     save_artifact(label_encoder, LABEL_ENCODER_PATH)
     logger.info("All model artifacts saved.")
+
+
+def save_metrics(cm, classes, accuracy, report):
+    """Persist test evaluation metrics."""
+    metrics = {
+        "cm": cm,
+        "classes": classes,
+        "accuracy": accuracy,
+        "report": report,
+    }
+    save_artifact(metrics, METRICS_PATH)
+    logger.info("Evaluation metrics saved to %s", METRICS_PATH)
+
+
+def load_metrics():
+    """Load saved evaluation metrics dict if available."""
+    if METRICS_PATH.exists():
+        return load_artifact(METRICS_PATH)
+    return None
 
 
 def load_model():

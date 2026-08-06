@@ -32,7 +32,7 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 
 from preprocess import batch_preprocess
-from utils import save_model
+from utils import save_model, save_metrics
 
 warnings.filterwarnings("ignore")
 logging.basicConfig(
@@ -614,7 +614,8 @@ def _run_training_pipeline(df: pd.DataFrame):
     # and store the SVC in the vectorizer dict under key 'svc'.
     vectorizer["svc"] = calibrated_svc
     save_model(best_lr, vectorizer, le)
-    logger.info("Artifacts saved to models/")
+    save_metrics(cm, class_names, acc, report_str)
+    logger.info("Artifacts & metrics saved to models/")
 
     return best_lr, vectorizer, le, cm, class_names, acc, report_str
 
